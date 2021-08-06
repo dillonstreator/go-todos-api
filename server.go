@@ -11,11 +11,25 @@ import (
 	"github.com/DillonStreator/todos/entityid"
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
+	"github.com/ulule/limiter/v3"
+	"github.com/ulule/limiter/v3/drivers/middleware/stdlib"
+	"github.com/ulule/limiter/v3/drivers/store/memory"
 )
+
+func newInMemoryLimiterMiddleware(r limiter.Rate) *stdlib.Middleware {
+	store := memory.NewStore()
+	limiter := limiter.New(store, r)
+	return stdlib.NewMiddleware(limiter)
+}
 
 func getMux() http.Handler {
 	r := chi.NewRouter()
 
+	requestLimiter := newInMemoryLimiterMiddleware(limiter.Rate{
+		Period: 1 * time.Second,
+		Limit:  1,
+	})
+	r.Use(requestLimiter.Handler)
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
@@ -36,6 +50,11 @@ func getMux() http.Handler {
 	})
 
 	r.Route("/users", func(usersRouter chi.Router) {
+		userCreationLimiter := newInMemoryLimiterMiddleware(limiter.Rate{
+			Period: 1 * time.Hour,
+			Limit:  5,
+		})
+		usersRouter.Use(userCreationLimiter.Handler)
 		usersRouter.Post("/", func(rw http.ResponseWriter, r *http.Request) {
 			var user = &domain.User{
 				ID:         entityid.Generator.Generate(),
@@ -85,7 +104,11 @@ func getMux() http.Handler {
 			rw.WriteHeader(http.StatusOK)
 			rw.Write(bytes)
 		})
-		todosRouter.Post("/", func(rw http.ResponseWriter, r *http.Request) {
+		todoCreationLimiter := newInMemoryLimiterMiddleware(limiter.Rate{
+			Period: 1 * time.Hour,
+			Limit:  100,
+		})
+		todosRouter.With(todoCreationLimiter.Handler).Post("/", func(rw http.ResponseWriter, r *http.Request) {
 			var user = &domain.User{}
 			store.FindByID(user, r.Header.Get("Authorization"))
 			if user.ID == "" {
