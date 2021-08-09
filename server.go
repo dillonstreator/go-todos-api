@@ -16,6 +16,14 @@ import (
 	"github.com/ulule/limiter/v3/drivers/store/memory"
 )
 
+type userContextKey string
+
+var USER_CONTEXT_KEY = userContextKey("user")
+
+func getUserFromRequest(r *http.Request) *domain.User {
+	return r.Context().Value(USER_CONTEXT_KEY).(*domain.User)
+}
+
 func newInMemoryLimiterMiddleware(r limiter.Rate) *stdlib.Middleware {
 	store := memory.NewStore()
 	limiter := limiter.New(store, r)
@@ -82,17 +90,29 @@ func getMux() http.Handler {
 					rw.WriteHeader(http.StatusUnauthorized)
 					return
 				}
-				next.ServeHTTP(rw, r)
+				var user = &domain.User{}
+				store.FindByID(user, r.Header.Get("Authorization"))
+				if user.ID == "" {
+					rw.WriteHeader(http.StatusNotFound)
+					return
+				}
+
+				user.LastSeenAt = time.Now()
+				err := store.Save(context.Background(), user)
+				if err != nil {
+					fmt.Println(err)
+					rw.WriteHeader(http.StatusInternalServerError)
+					rw.Write([]byte(err.Error()))
+					return
+				}
+
+				ctx := context.WithValue(r.Context(), USER_CONTEXT_KEY, user)
+				next.ServeHTTP(rw, r.WithContext(ctx))
 			})
 		})
 
 		todosRouter.Get("/", func(rw http.ResponseWriter, r *http.Request) {
-			var user = &domain.User{}
-			store.FindByID(user, r.Header.Get("Authorization"))
-			if user.ID == "" {
-				rw.WriteHeader(http.StatusNotFound)
-				return
-			}
+			user := getUserFromRequest(r)
 			var todos = make([]*domain.Todo, 0)
 			todos = append(todos, user.Todos...)
 			bytes, err := json.Marshal(todos)
@@ -109,12 +129,7 @@ func getMux() http.Handler {
 			Limit:  100,
 		})
 		todosRouter.With(todoCreationLimiter.Handler).Post("/", func(rw http.ResponseWriter, r *http.Request) {
-			var user = &domain.User{}
-			store.FindByID(user, r.Header.Get("Authorization"))
-			if user.ID == "" {
-				rw.WriteHeader(http.StatusNotFound)
-				return
-			}
+			user := getUserFromRequest(r)
 
 			var todo = &domain.Todo{}
 			decoder := json.NewDecoder(r.Body)
@@ -150,12 +165,7 @@ func getMux() http.Handler {
 			rw.Write(bytes)
 		})
 		todosRouter.Put("/{todoID}", func(rw http.ResponseWriter, r *http.Request) {
-			var user = &domain.User{}
-			store.FindByID(user, r.Header.Get("Authorization"))
-			if user.ID == "" {
-				rw.WriteHeader(http.StatusNotFound)
-				return
-			}
+			user := getUserFromRequest(r)
 
 			todoID := entityid.ID(chi.URLParam(r, "todoID"))
 			todo := user.Todos.FindByID(todoID)
@@ -203,12 +213,7 @@ func getMux() http.Handler {
 			rw.Write(bytes)
 		})
 		todosRouter.Delete("/{todoID}", func(rw http.ResponseWriter, r *http.Request) {
-			var user = &domain.User{}
-			store.FindByID(user, r.Header.Get("Authorization"))
-			if user.ID == "" {
-				rw.WriteHeader(http.StatusNotFound)
-				return
-			}
+			user := getUserFromRequest(r)
 
 			todoID := entityid.ID(chi.URLParam(r, "todoID"))
 			index := user.Todos.FindIndexByID(todoID)
