@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 
@@ -12,8 +13,22 @@ import (
 var store *milo.Store
 
 func main() {
+	cloudSQLConnectionName := os.Getenv("CLOUD_SQL_CONNECTION_NAME")
+	socketDir := os.Getenv("SOCKET_DIR")
+	var addr string
+
+	var network string
+	if cloudSQLConnectionName != "" && socketDir != "" {
+		addr = fmt.Sprintf("%s/%s", socketDir, cloudSQLConnectionName)
+		network = "unix"
+	} else {
+		addr = getEnv("DB_HOST", "localhost:8200")
+		network = "tcp"
+	}
+
 	db := pg.Connect(&pg.Options{
-		Addr:     getEnv("DB_ADDR", "localhost:8200"),
+		Network:  network,
+		Addr:     addr,
 		User:     getEnv("DB_USER", "postgres"),
 		Password: getEnv("DB_PASS", "password"),
 		Database: getEnv("DB_NAME", "todos"),

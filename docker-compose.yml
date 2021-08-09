@@ -8,3 +8,15 @@ services:
     environment:
       - POSTGRES_PASSWORD=password
       - POSTGRES_DB=todos
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - 4000:4000
+    environment:
+      WAIT_HOSTS: postgres:5432
+      DB_HOST: postgres:5432
+      DB_USER: postgres
+      DB_PASS: password
+      DB_NAME: todos
