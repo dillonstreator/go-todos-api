@@ -91,7 +91,7 @@ func getMux() http.Handler {
 					return
 				}
 				var user = &domain.User{}
-				store.FindByID(user, r.Header.Get("Authorization"))
+				store.FindByID(user, userID)
 				if user.ID == "" {
 					rw.WriteHeader(http.StatusNotFound)
 					return
