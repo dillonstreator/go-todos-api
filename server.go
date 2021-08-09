@@ -62,8 +62,7 @@ func getMux() http.Handler {
 			Period: 1 * time.Hour,
 			Limit:  5,
 		})
-		usersRouter.Use(userCreationLimiter.Handler)
-		usersRouter.Post("/", func(rw http.ResponseWriter, r *http.Request) {
+		usersRouter.With(userCreationLimiter.Handler).Post("/", func(rw http.ResponseWriter, r *http.Request) {
 			var user = &domain.User{
 				ID:         entityid.Generator.Generate(),
 				CreatedAt:  time.Now(),
