@@ -243,5 +243,8 @@ func getMux() http.Handler {
 func startServer() error {
 	mux := getMux()
 	PORT := getEnv("PORT", "4000")
-	return http.ListenAndServe(fmt.Sprintf(":%s", PORT), mux)
+	HOST := getEnv("HOST", "")
+	addr := fmt.Sprintf("%s:%s", HOST, PORT)
+	fmt.Printf("Starting server at %s\n", addr)
+	return http.ListenAndServe(addr, mux)
 }

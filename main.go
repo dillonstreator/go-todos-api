@@ -8,11 +8,17 @@ import (
 	"github.com/DillonStreator/todos/storage"
 	"github.com/eleanorhealth/milo"
 	"github.com/go-pg/pg/v10"
+	"github.com/joho/godotenv"
 )
 
 var store *milo.Store
 
 func main() {
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
+
 	cloudSQLConnectionName := os.Getenv("CLOUD_SQL_CONNECTION_NAME")
 	socketDir := os.Getenv("SOCKET_DIR")
 	var addr string
@@ -35,7 +41,7 @@ func main() {
 	})
 	defer db.Close()
 
-	err := storage.CreateSchema(db)
+	err = storage.CreateSchema(db)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -16,10 +16,8 @@ type User struct {
 type Todos []*Todo
 
 func (todos Todos) FindByID(id entityid.ID) *Todo {
-	for _, todo := range todos {
-		if todo.ID == id {
-			return todo
-		}
+	if index := todos.FindIndexByID(id); index != -1 {
+		return todos[index]
 	}
 	return &Todo{}
 }

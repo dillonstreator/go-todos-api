@@ -3,3 +3,4 @@ todos
 terraform*
 .terraform*
 !terraform.tf
+.env
