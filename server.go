@@ -63,15 +63,6 @@ func tooManyRequestsHandler(rw http.ResponseWriter, r *http.Request, err error) 
 func getMux() http.Handler {
 	r := chi.NewRouter()
 
-	requestLimiter := newInMemoryLimiterMiddleware(limiter.Rate{
-		Period: 1 * time.Second,
-		Limit:  5,
-	})
-	requestLimiter.OnError = tooManyRequestsHandler
-	r.Use(requestLimiter.Handler)
-	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
-	r.Use(middleware.Logger)
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 			rw.Header().Set("Access-Control-Allow-Origin", "*")
@@ -84,6 +75,16 @@ func getMux() http.Handler {
 			next.ServeHTTP(rw, r)
 		})
 	})
+
+	requestLimiter := newInMemoryLimiterMiddleware(limiter.Rate{
+		Period: 1 * time.Second,
+		Limit:  5,
+	})
+	requestLimiter.OnError = tooManyRequestsHandler
+	r.Use(requestLimiter.Handler)
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
+	r.Use(middleware.Logger)
 
 	r.Get("/", func(rw http.ResponseWriter, r *http.Request) {
 		http.Redirect(rw, r, "/status", http.StatusPermanentRedirect)
