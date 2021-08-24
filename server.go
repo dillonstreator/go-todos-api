@@ -34,20 +34,45 @@ func newInMemoryLimiterMiddleware(r limiter.Rate) *stdlib.Middleware {
 	return stdlib.NewMiddleware(limiter)
 }
 
+type ErrorResponseError struct {
+	Message string `json:"message"`
+	Field   string `json:"field"`
+}
+type ErrorResponse struct {
+	Errors []ErrorResponseError `json:"errors"`
+}
+
+func respondError(rw http.ResponseWriter, status int, errors ErrorResponse) {
+	bytes, err := json.Marshal(errors)
+	if err != nil {
+		respondError(rw, http.StatusInternalServerError, ErrorResponse{
+			Errors: []ErrorResponseError{{Message: "Something went wrong"}},
+		})
+		return
+	}
+	rw.WriteHeader(status)
+	rw.Write(bytes)
+}
+
 func getMux() http.Handler {
 	r := chi.NewRouter()
 
 	requestLimiter := newInMemoryLimiterMiddleware(limiter.Rate{
 		Period: 1 * time.Second,
-		Limit:  1,
+		Limit:  5,
 	})
 	r.Use(requestLimiter.Handler)
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+			rw.Header().Set("Access-Control-Allow-Origin", "*")
+			rw.Header().Set("Access-Control-Allow-Methods", "POST, GET, PUT, DELETE, OPTIONS")
+			rw.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
+			if r.Method == "OPTIONS" {
+				return
+			}
 			rw.Header().Add("Content-Type", "application/json")
 			next.ServeHTTP(rw, r)
 		})
@@ -77,6 +102,9 @@ func getMux() http.Handler {
 			bytes, err := json.Marshal(user)
 			if err != nil {
 				rw.WriteHeader(http.StatusInternalServerError)
+				respondError(rw, http.StatusInternalServerError, ErrorResponse{
+					Errors: []ErrorResponseError{{Message: err.Error()}},
+				})
 				return
 			}
 
@@ -90,22 +118,26 @@ func getMux() http.Handler {
 			return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 				userID := r.Header.Get("Authorization")
 				if userID == "" {
-					rw.WriteHeader(http.StatusUnauthorized)
+					respondError(rw, http.StatusUnauthorized, ErrorResponse{
+						Errors: []ErrorResponseError{{Message: "Not authorized"}},
+					})
 					return
 				}
 				var user = &domain.User{}
 				store.FindByID(user, userID)
 				if user.ID == "" {
-					rw.WriteHeader(http.StatusNotFound)
+					respondError(rw, http.StatusNotFound, ErrorResponse{
+						Errors: []ErrorResponseError{{Message: "User not found"}},
+					})
 					return
 				}
 
 				user.LastSeenAt = time.Now()
 				err := store.Save(context.Background(), user)
 				if err != nil {
-					fmt.Println(err)
-					rw.WriteHeader(http.StatusInternalServerError)
-					rw.Write([]byte(err.Error()))
+					respondError(rw, http.StatusInternalServerError, ErrorResponse{
+						Errors: []ErrorResponseError{{Message: err.Error()}},
+					})
 					return
 				}
 
@@ -119,7 +151,9 @@ func getMux() http.Handler {
 			todos = append(todos, user.Todos...)
 			bytes, err := json.Marshal(todos)
 			if err != nil {
-				rw.WriteHeader(http.StatusInternalServerError)
+				respondError(rw, http.StatusInternalServerError, ErrorResponse{
+					Errors: []ErrorResponseError{{Message: err.Error()}},
+				})
 				return
 			}
 
@@ -138,9 +172,9 @@ func getMux() http.Handler {
 			decoder.DisallowUnknownFields()
 			err := decoder.Decode(todo)
 			if err != nil {
-				fmt.Println(err)
-				rw.WriteHeader(http.StatusBadRequest)
-				rw.Write([]byte(err.Error()))
+				respondError(rw, http.StatusBadRequest, ErrorResponse{
+					Errors: []ErrorResponseError{{Message: err.Error()}},
+				})
 				return
 			}
 
@@ -150,16 +184,17 @@ func getMux() http.Handler {
 			user.Todos = append(user.Todos, todo)
 			err = store.Save(context.Background(), user)
 			if err != nil {
-				fmt.Println(err)
-				rw.WriteHeader(http.StatusInternalServerError)
-				rw.Write([]byte(err.Error()))
+				respondError(rw, http.StatusInternalServerError, ErrorResponse{
+					Errors: []ErrorResponseError{{Message: err.Error()}},
+				})
 				return
 			}
 
 			bytes, err := json.Marshal(todo)
 			if err != nil {
-				fmt.Println(err)
-				rw.WriteHeader(http.StatusInternalServerError)
+				respondError(rw, http.StatusInternalServerError, ErrorResponse{
+					Errors: []ErrorResponseError{{Message: err.Error()}},
+				})
 				return
 			}
 
@@ -172,7 +207,9 @@ func getMux() http.Handler {
 			todoID := entityid.ID(chi.URLParam(r, "todoID"))
 			todo := user.Todos.FindByID(todoID)
 			if todo.ID == "" {
-				rw.WriteHeader(http.StatusNotFound)
+				respondError(rw, http.StatusNotFound, ErrorResponse{
+					Errors: []ErrorResponseError{{Message: "Todo not found"}},
+				})
 				return
 			}
 
@@ -185,9 +222,9 @@ func getMux() http.Handler {
 			decoder.DisallowUnknownFields()
 			err := decoder.Decode(updatedTodo)
 			if err != nil {
-				fmt.Println(err)
-				rw.WriteHeader(http.StatusBadRequest)
-				rw.Write([]byte(err.Error()))
+				respondError(rw, http.StatusBadRequest, ErrorResponse{
+					Errors: []ErrorResponseError{{Message: err.Error()}},
+				})
 				return
 			}
 
@@ -198,16 +235,17 @@ func getMux() http.Handler {
 
 			err = store.Save(context.Background(), user)
 			if err != nil {
-				fmt.Println(err)
-				rw.WriteHeader(http.StatusInternalServerError)
-				rw.Write([]byte(err.Error()))
+				respondError(rw, http.StatusInternalServerError, ErrorResponse{
+					Errors: []ErrorResponseError{{Message: err.Error()}},
+				})
 				return
 			}
 
 			bytes, err := json.Marshal(todo)
 			if err != nil {
-				fmt.Println(err)
-				rw.WriteHeader(http.StatusInternalServerError)
+				respondError(rw, http.StatusInternalServerError, ErrorResponse{
+					Errors: []ErrorResponseError{{Message: err.Error()}},
+				})
 				return
 			}
 
@@ -220,16 +258,18 @@ func getMux() http.Handler {
 			todoID := entityid.ID(chi.URLParam(r, "todoID"))
 			index := user.Todos.FindIndexByID(todoID)
 			if index == -1 {
-				rw.WriteHeader(http.StatusNotFound)
+				respondError(rw, http.StatusNotFound, ErrorResponse{
+					Errors: []ErrorResponseError{{Message: "Todo not found"}},
+				})
 				return
 			}
 
 			user.Todos = append(user.Todos[:index], user.Todos[index+1:]...)
 			err := store.Save(context.Background(), user)
 			if err != nil {
-				fmt.Println(err)
-				rw.WriteHeader(http.StatusInternalServerError)
-				rw.Write([]byte(err.Error()))
+				respondError(rw, http.StatusInternalServerError, ErrorResponse{
+					Errors: []ErrorResponseError{{Message: err.Error()}},
+				})
 				return
 			}
 
