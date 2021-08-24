@@ -28,12 +28,6 @@ func requestSetUser(r *http.Request, user *domain.User) *http.Request {
 	return r.WithContext(ctx)
 }
 
-func newInMemoryLimiterMiddleware(r limiter.Rate) *stdlib.Middleware {
-	store := memory.NewStore()
-	limiter := limiter.New(store, r)
-	return stdlib.NewMiddleware(limiter)
-}
-
 type ErrorResponseError struct {
 	Message string `json:"message"`
 	Field   string `json:"field"`
@@ -60,6 +54,14 @@ func tooManyRequestsHandler(rw http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func newInMemoryLimiterMiddleware(r limiter.Rate) *stdlib.Middleware {
+	store := memory.NewStore()
+	limiter := limiter.New(store, r)
+	limiterMiddleware := stdlib.NewMiddleware(limiter)
+	limiterMiddleware.OnLimitReached = tooManyRequestsHandler
+	return limiterMiddleware
+}
+
 func getMux() http.Handler {
 	r := chi.NewRouter()
 
@@ -80,7 +82,6 @@ func getMux() http.Handler {
 		Period: 1 * time.Second,
 		Limit:  2,
 	})
-	requestLimiter.OnLimitReached = tooManyRequestsHandler
 	r.Use(requestLimiter.Handler)
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
@@ -99,7 +100,6 @@ func getMux() http.Handler {
 			Period: 1 * time.Hour,
 			Limit:  5,
 		})
-		userCreationLimiter.OnLimitReached = tooManyRequestsHandler
 		usersRouter.With(userCreationLimiter.Handler).Post("/", func(rw http.ResponseWriter, r *http.Request) {
 			var user = &domain.User{
 				ID:         entityid.Generator.Generate(),
@@ -173,7 +173,6 @@ func getMux() http.Handler {
 			Period: 1 * time.Hour,
 			Limit:  100,
 		})
-		todoCreationLimiter.OnLimitReached = tooManyRequestsHandler
 		todosRouter.With(todoCreationLimiter.Handler).Post("/", func(rw http.ResponseWriter, r *http.Request) {
 			user := requestGetUser(r)
 
