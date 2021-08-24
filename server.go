@@ -54,7 +54,7 @@ func respondError(rw http.ResponseWriter, status int, errors ErrorResponse) {
 	rw.Write(bytes)
 }
 
-func tooManyRequestsHandler(rw http.ResponseWriter, r *http.Request, err error) {
+func tooManyRequestsHandler(rw http.ResponseWriter, r *http.Request) {
 	respondError(rw, http.StatusTooManyRequests, ErrorResponse{
 		Errors: []ErrorResponseError{{Message: "Too many requests... Slow down"}},
 	})
@@ -78,9 +78,9 @@ func getMux() http.Handler {
 
 	requestLimiter := newInMemoryLimiterMiddleware(limiter.Rate{
 		Period: 1 * time.Second,
-		Limit:  5,
+		Limit:  2,
 	})
-	requestLimiter.OnError = tooManyRequestsHandler
+	requestLimiter.OnLimitReached = tooManyRequestsHandler
 	r.Use(requestLimiter.Handler)
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
@@ -99,7 +99,7 @@ func getMux() http.Handler {
 			Period: 1 * time.Hour,
 			Limit:  5,
 		})
-		userCreationLimiter.OnError = tooManyRequestsHandler
+		userCreationLimiter.OnLimitReached = tooManyRequestsHandler
 		usersRouter.With(userCreationLimiter.Handler).Post("/", func(rw http.ResponseWriter, r *http.Request) {
 			var user = &domain.User{
 				ID:         entityid.Generator.Generate(),
@@ -173,7 +173,7 @@ func getMux() http.Handler {
 			Period: 1 * time.Hour,
 			Limit:  100,
 		})
-		todoCreationLimiter.OnError = tooManyRequestsHandler
+		todoCreationLimiter.OnLimitReached = tooManyRequestsHandler
 		todosRouter.With(todoCreationLimiter.Handler).Post("/", func(rw http.ResponseWriter, r *http.Request) {
 			user := requestGetUser(r)
 
