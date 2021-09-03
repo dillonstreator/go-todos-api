@@ -11,6 +11,8 @@ type User struct {
 	CreatedAt  time.Time   `json:"createdAt"`
 	LastSeenAt time.Time   `json:"lastSeenAt"`
 	Todos      Todos       `json:"todos"`
+	Email      string      `json:"email"`
+	Password   string      `json:"-"`
 }
 
 type Todos []*Todo

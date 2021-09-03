@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/mail"
 	"time"
 
 	"github.com/DillonStreator/todos/domain"
 	"github.com/DillonStreator/todos/entityid"
+	"github.com/DillonStreator/todos/jwt"
+	"github.com/DillonStreator/todos/passwords"
+	"github.com/eleanorhealth/milo"
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
 	"github.com/ulule/limiter/v3"
@@ -62,6 +66,11 @@ func newInMemoryLimiterMiddleware(r limiter.Rate) *stdlib.Middleware {
 	return limiterMiddleware
 }
 
+type userCredentialsInput struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
 func getMux() http.Handler {
 	r := chi.NewRouter()
 
@@ -95,17 +104,126 @@ func getMux() http.Handler {
 		rw.Write([]byte("🌈"))
 	})
 
+	r.Route("/sessions", func(sessionsRouter chi.Router) {
+		sessionCreateLimiter := newInMemoryLimiterMiddleware(limiter.Rate{
+			Period: 5 * time.Minute,
+			Limit:  20,
+		})
+		sessionsRouter.With(sessionCreateLimiter.Handler).Post("/", func(rw http.ResponseWriter, r *http.Request) {
+			var userCredsInput = userCredentialsInput{}
+			decoder := json.NewDecoder(r.Body)
+			decoder.DisallowUnknownFields()
+			err := decoder.Decode(&userCredsInput)
+			if err != nil {
+				respondError(rw, http.StatusBadRequest, ErrorResponse{
+					Errors: []ErrorResponseError{{Message: "invalid input"}},
+				})
+				return
+			}
+
+			user := &domain.User{}
+			err = store.FindOneBy(user, milo.Equal("Email", userCredsInput.Email))
+			if err != nil && err != milo.ErrNotFound {
+				respondError(rw, http.StatusBadRequest, ErrorResponse{
+					Errors: []ErrorResponseError{{Message: err.Error()}},
+				})
+				return
+			}
+			if user.ID == "" {
+				respondError(rw, http.StatusBadRequest, ErrorResponse{
+					Errors: []ErrorResponseError{{Message: "incorrect credentials"}},
+				})
+				return
+			}
+			if err = passwords.Compare([]byte(user.Password), []byte(userCredsInput.Password)); err != nil {
+				respondError(rw, http.StatusBadRequest, ErrorResponse{
+					Errors: []ErrorResponseError{{Message: "incorrect credentials"}},
+				})
+				return
+			}
+
+			user.LastSeenAt = time.Now()
+			store.Save(context.Background(), user)
+			jwtInput := jwt.Input{
+				UserID: user.ID,
+				Email:  user.Email,
+			}
+			token, err := jwt.SignJWT(jwtInput)
+			if err != nil {
+				respondError(rw, http.StatusBadRequest, ErrorResponse{
+					Errors: []ErrorResponseError{{Message: err.Error()}},
+				})
+				return
+			}
+
+			bytes, err := json.Marshal(struct {
+				Token string `json:"token"`
+			}{Token: token})
+			if err != nil {
+				rw.WriteHeader(http.StatusInternalServerError)
+				respondError(rw, http.StatusInternalServerError, ErrorResponse{
+					Errors: []ErrorResponseError{{Message: err.Error()}},
+				})
+				return
+			}
+
+			rw.WriteHeader(http.StatusOK)
+			rw.Write(bytes)
+		})
+	})
+
 	r.Route("/users", func(usersRouter chi.Router) {
 		userCreationLimiter := newInMemoryLimiterMiddleware(limiter.Rate{
 			Period: 1 * time.Hour,
 			Limit:  5,
 		})
 		usersRouter.With(userCreationLimiter.Handler).Post("/", func(rw http.ResponseWriter, r *http.Request) {
+			var userCredsInput = userCredentialsInput{}
+			decoder := json.NewDecoder(r.Body)
+			decoder.DisallowUnknownFields()
+			err := decoder.Decode(&userCredsInput)
+			if err != nil {
+				respondError(rw, http.StatusBadRequest, ErrorResponse{
+					Errors: []ErrorResponseError{{Message: "invalid input"}},
+				})
+				return
+			}
+			if _, err := mail.ParseAddress(userCredsInput.Email); err != nil || len(userCredsInput.Password) < 8 {
+				respondError(rw, http.StatusBadRequest, ErrorResponse{
+					Errors: []ErrorResponseError{{Message: "must provide a valid email address and a password with atleast 8 characters"}},
+				})
+				return
+			}
+
+			existingUser := &domain.User{}
+			err = store.FindOneBy(existingUser, milo.Equal("Email", userCredsInput.Email))
+			if err != nil && err != milo.ErrNotFound {
+				respondError(rw, http.StatusBadRequest, ErrorResponse{
+					Errors: []ErrorResponseError{{Message: err.Error()}},
+				})
+				return
+			}
+			if existingUser.ID != "" {
+				respondError(rw, http.StatusConflict, ErrorResponse{
+					Errors: []ErrorResponseError{{Message: "email already in use"}},
+				})
+				return
+			}
+
+			hashedPassword, err := passwords.Hash([]byte(userCredsInput.Password))
+			if err != nil {
+				respondError(rw, http.StatusInternalServerError, ErrorResponse{
+					Errors: []ErrorResponseError{{Message: err.Error()}},
+				})
+				return
+			}
 			var user = &domain.User{
 				ID:         entityid.Generator.Generate(),
 				CreatedAt:  time.Now(),
 				LastSeenAt: time.Now(),
 				Todos:      make([]*domain.Todo, 0),
+				Email:      userCredsInput.Email,
+				Password:   string(hashedPassword),
 			}
 			store.Save(context.Background(), user)
 			bytes, err := json.Marshal(user)
@@ -125,15 +243,23 @@ func getMux() http.Handler {
 	r.Route("/todos", func(todosRouter chi.Router) {
 		todosRouter.Use(func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-				userID := r.Header.Get("Authorization")
-				if userID == "" {
+				token := r.Header.Get("Authorization")
+				if token == "" {
 					respondError(rw, http.StatusUnauthorized, ErrorResponse{
 						Errors: []ErrorResponseError{{Message: "Not authorized"}},
 					})
 					return
 				}
+				claim, err := jwt.Verify(token)
+				if err != nil {
+					respondError(rw, http.StatusUnauthorized, ErrorResponse{
+						Errors: []ErrorResponseError{{Message: err.Error()}},
+					})
+					return
+				}
+
 				var user = &domain.User{}
-				store.FindByID(user, userID)
+				store.FindByID(user, claim.UserID)
 				if user.ID == "" {
 					respondError(rw, http.StatusNotFound, ErrorResponse{
 						Errors: []ErrorResponseError{{Message: "User not found"}},
@@ -142,7 +268,7 @@ func getMux() http.Handler {
 				}
 
 				user.LastSeenAt = time.Now()
-				err := store.Save(context.Background(), user)
+				err = store.Save(context.Background(), user)
 				if err != nil {
 					respondError(rw, http.StatusInternalServerError, ErrorResponse{
 						Errors: []ErrorResponseError{{Message: err.Error()}},

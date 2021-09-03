@@ -10,6 +10,8 @@ import (
 
 type user struct {
 	ID         string    `pg:"id"`
+	Email      string    `pg:"email"`
+	Password   string    `pg:"password"`
 	CreatedAt  time.Time `pg:"created_at"`
 	LastSeenAt time.Time `pg:"last_seen_at"`
 	Todos      []*todo   `pg:"rel:has-many"`
@@ -31,6 +33,8 @@ func (u *user) FromEntity(e interface{}) error {
 	entity := e.(*domain.User)
 
 	u.ID = entity.ID.String()
+	u.Email = entity.Email
+	u.Password = entity.Password
 
 	u.CreatedAt = entity.CreatedAt
 	u.LastSeenAt = entity.LastSeenAt
@@ -54,6 +58,8 @@ func (u *user) ToEntity() (interface{}, error) {
 	entity := &domain.User{}
 
 	entity.ID = entityid.ID(u.ID)
+	entity.Email = u.Email
+	entity.Password = u.Password
 
 	entity.CreatedAt = u.CreatedAt
 	entity.LastSeenAt = u.LastSeenAt
