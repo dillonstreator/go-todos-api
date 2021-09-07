@@ -160,7 +160,6 @@ func getMux() http.Handler {
 				Token string `json:"token"`
 			}{Token: token})
 			if err != nil {
-				rw.WriteHeader(http.StatusInternalServerError)
 				respondError(rw, http.StatusInternalServerError, ErrorResponse{
 					Errors: []ErrorResponseError{{Message: err.Error()}},
 				})
@@ -228,7 +227,6 @@ func getMux() http.Handler {
 			store.Save(context.Background(), user)
 			bytes, err := json.Marshal(user)
 			if err != nil {
-				rw.WriteHeader(http.StatusInternalServerError)
 				respondError(rw, http.StatusInternalServerError, ErrorResponse{
 					Errors: []ErrorResponseError{{Message: err.Error()}},
 				})
