@@ -37,9 +37,9 @@ type limiterDefaultOpts struct {
 	Limit        int64
 }
 
-func someEnvsSet(envKeys ...string) bool {
+func onlySomeEnvsSet(envKeys ...string) bool {
 	if len(envKeys) <= 1 {
-		return true
+		return false
 	}
 
 	_, ok := os.LookupEnv(envKeys[0])
@@ -47,11 +47,12 @@ func someEnvsSet(envKeys ...string) bool {
 	for _, key := range envKeys[1:] {
 		_, ok := os.LookupEnv(key)
 		if ok != isset {
-			return false
+			return true
 		}
 	}
-	return true
+	return false
 }
+
 func noEnvsSet(envKeys ...string) bool {
 	for _, key := range envKeys {
 		_, ok := os.LookupEnv(key)
@@ -67,7 +68,7 @@ func getRequestLimiterRateEnv(key string, defaultOpts limiterDefaultOpts) limite
 	quantityKey := fmt.Sprintf("%s_REQUEST_LIMITER_QUANTITY", key)
 	limitKey := fmt.Sprintf("%s_REQUEST_LIMITER_LIMIT", key)
 	envKeys := []string{unitsKey, quantityKey, limitKey}
-	if someEnvsSet(envKeys...) {
+	if onlySomeEnvsSet(envKeys...) {
 		log.Fatalf("must either specify all or none of envs: %s", strings.Join(envKeys, ","))
 	} else if noEnvsSet(envKeys...) {
 		return limiter.Rate{
