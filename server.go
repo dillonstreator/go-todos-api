@@ -4,8 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/mail"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/DillonStreator/todos/domain"
@@ -19,6 +23,79 @@ import (
 	"github.com/ulule/limiter/v3/drivers/middleware/stdlib"
 	"github.com/ulule/limiter/v3/drivers/store/memory"
 )
+
+var durationUnitsMap = map[string]time.Duration{
+	"ms":  time.Millisecond,
+	"s":   time.Second,
+	"min": time.Minute,
+	"hr":  time.Hour,
+}
+
+type limiterDefaultOpts struct {
+	Units        time.Duration
+	UnitQuantity int64
+	Limit        int64
+}
+
+func someEnvsSet(envKeys ...string) bool {
+	if len(envKeys) <= 1 {
+		return true
+	}
+
+	_, ok := os.LookupEnv(envKeys[0])
+	isset := ok
+	for _, key := range envKeys[1:] {
+		_, ok := os.LookupEnv(key)
+		if ok != isset {
+			return false
+		}
+	}
+	return true
+}
+func noEnvsSet(envKeys ...string) bool {
+	for _, key := range envKeys {
+		_, ok := os.LookupEnv(key)
+		if ok {
+			return false
+		}
+	}
+	return true
+}
+
+func getRequestLimiterRateEnv(key string, defaultOpts limiterDefaultOpts) limiter.Rate {
+	unitsKey := fmt.Sprintf("%s_REQUEST_LIMITER_UNITS", key)
+	quantityKey := fmt.Sprintf("%s_REQUEST_LIMITER_QUANTITY", key)
+	limitKey := fmt.Sprintf("%s_REQUEST_LIMITER_LIMIT", key)
+	envKeys := []string{unitsKey, quantityKey, limitKey}
+	if someEnvsSet(envKeys...) {
+		log.Fatalf("must either specify all or none of envs: %s", strings.Join(envKeys, ","))
+	} else if noEnvsSet(envKeys...) {
+		return limiter.Rate{
+			Period: defaultOpts.Units * time.Duration(defaultOpts.UnitQuantity),
+			Limit:  defaultOpts.Limit,
+		}
+	}
+
+	units := getEnv(unitsKey, "")
+	durationUnits, ok := durationUnitsMap[units]
+	if !ok {
+		log.Fatalf("invalid units %s for key %s", units, unitsKey)
+	}
+	quantity := getEnv(quantityKey, "")
+	quantityInt, err := strconv.ParseInt(quantity, 10, 64)
+	if err != nil {
+		log.Fatal(err)
+	}
+	limit := getEnv(limitKey, "")
+	limitInt, err := strconv.ParseInt(limit, 10, 64)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return limiter.Rate{
+		Period: durationUnits * time.Duration(quantityInt),
+		Limit:  limitInt,
+	}
+}
 
 type userContextKey string
 
@@ -87,10 +164,13 @@ func getMux() http.Handler {
 		})
 	})
 
-	requestLimiter := newInMemoryLimiterMiddleware(limiter.Rate{
-		Period: 1 * time.Second,
-		Limit:  2,
-	})
+	requestLimiter := newInMemoryLimiterMiddleware(
+		getRequestLimiterRateEnv("GLOBAL", limiterDefaultOpts{
+			Units:        time.Second,
+			UnitQuantity: 1,
+			Limit:        2,
+		}),
+	)
 	r.Use(requestLimiter.Handler)
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
@@ -105,10 +185,13 @@ func getMux() http.Handler {
 	})
 
 	r.Route("/sessions", func(sessionsRouter chi.Router) {
-		sessionCreateLimiter := newInMemoryLimiterMiddleware(limiter.Rate{
-			Period: 5 * time.Minute,
-			Limit:  20,
-		})
+		sessionCreateLimiter := newInMemoryLimiterMiddleware(
+			getRequestLimiterRateEnv("SIGN_IN", limiterDefaultOpts{
+				Units:        time.Minute,
+				UnitQuantity: 5,
+				Limit:        20,
+			}),
+		)
 		sessionsRouter.With(sessionCreateLimiter.Handler).Post("/", func(rw http.ResponseWriter, r *http.Request) {
 			var userCredsInput = userCredentialsInput{}
 			decoder := json.NewDecoder(r.Body)
@@ -172,10 +255,13 @@ func getMux() http.Handler {
 	})
 
 	r.Route("/users", func(usersRouter chi.Router) {
-		userCreationLimiter := newInMemoryLimiterMiddleware(limiter.Rate{
-			Period: 1 * time.Hour,
-			Limit:  5,
-		})
+		userCreationLimiter := newInMemoryLimiterMiddleware(
+			getRequestLimiterRateEnv("USER_CREATION", limiterDefaultOpts{
+				Units:        time.Hour,
+				UnitQuantity: 1,
+				Limit:        5,
+			}),
+		)
 		usersRouter.With(userCreationLimiter.Handler).Post("/", func(rw http.ResponseWriter, r *http.Request) {
 			var userCredsInput = userCredentialsInput{}
 			decoder := json.NewDecoder(r.Body)
@@ -293,10 +379,13 @@ func getMux() http.Handler {
 			rw.WriteHeader(http.StatusOK)
 			rw.Write(bytes)
 		})
-		todoCreationLimiter := newInMemoryLimiterMiddleware(limiter.Rate{
-			Period: 1 * time.Hour,
-			Limit:  100,
-		})
+		todoCreationLimiter := newInMemoryLimiterMiddleware(
+			getRequestLimiterRateEnv("TODO_CREATION", limiterDefaultOpts{
+				Units:        time.Hour,
+				UnitQuantity: 1,
+				Limit:        100,
+			}),
+		)
 		todosRouter.With(todoCreationLimiter.Handler).Post("/", func(rw http.ResponseWriter, r *http.Request) {
 			user := requestGetUser(r)
 

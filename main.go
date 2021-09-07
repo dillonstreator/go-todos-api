@@ -14,6 +14,11 @@ import (
 var store *milo.Store
 
 func main() {
+	_, jwtSecretEnvSet := os.LookupEnv("JWT_SECRET")
+	if !jwtSecretEnvSet {
+		log.Fatal("JWT_SECRET env must be set")
+	}
+
 	err := godotenv.Load()
 	if err != nil {
 		log.Fatal("Error loading .env file")
